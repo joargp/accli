@@ -1,0 +1,279 @@
+// freebusy.jxa - Get busy time slots across calendars (EventKit)
+// __args is injected by jxa-runner.js
+// Expected args: { calendars, calendarIds, calendarIndexes, from, to }
+
+(function() {
+  ObjC.import('Foundation');
+  ObjC.import('EventKit');
+
+  var args = __args;
+
+  function unwrap(x) {
+    return ObjC.unwrap(x);
+  }
+
+  function toNSDate(date) {
+    return $.NSDate.dateWithTimeIntervalSince1970(date.getTime() / 1000);
+  }
+
+  function ensureCalendarAccess(store) {
+    var status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
+
+    var fullAccessStatus =
+      typeof $.EKAuthorizationStatusFullAccess !== 'undefined' ? $.EKAuthorizationStatusFullAccess : null;
+    var writeOnlyStatus =
+      typeof $.EKAuthorizationStatusWriteOnly !== 'undefined' ? $.EKAuthorizationStatusWriteOnly : null;
+
+    if (status === $.EKAuthorizationStatusAuthorized || (fullAccessStatus !== null && status === fullAccessStatus)) {
+      return { ok: true };
+    }
+
+    // "Add Only Access" / write-only is not sufficient for listing calendars/events.
+    if (writeOnlyStatus !== null && status === writeOnlyStatus) {
+      return {
+        ok: false,
+        error: {
+          code: 'NOT_AUTHORIZED',
+          message:
+            'Calendar access is set to Add Only (write-only). Change it to Full Access in System Settings > Privacy & Security > Calendars (Options… button).'
+        }
+      };
+    }
+
+    if (status === $.EKAuthorizationStatusNotDetermined) {
+      var done = false;
+      var granted = false;
+
+      if (store.respondsToSelector($.NSSelectorFromString($('requestFullAccessToEventsWithCompletion:')))) {
+        store.requestFullAccessToEventsWithCompletion(function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      } else {
+        store.requestAccessToEntityTypeCompletion($.EKEntityTypeEvent, function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      }
+
+      var start = $.NSDate.date;
+      while (!done) {
+        var elapsed = $.NSDate.date.timeIntervalSinceDate(start);
+        if (elapsed > 15.0) {
+          done = true;
+          granted = false;
+          break;
+        }
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+      }
+
+      if (granted) {
+        return { ok: true };
+      }
+    }
+
+    return {
+      ok: false,
+      error: {
+        code: 'NOT_AUTHORIZED',
+        message:
+          'Calendar access not granted. Enable Full Access (not Add Only) in System Settings > Privacy & Security > Calendars (Options… button) for the responsible app (often \"osascript\" and/or your terminal).'
+      }
+    };
+  }
+
+  function formatLocalDate(date) {
+    var year = date.getFullYear();
+    var month = String(date.getMonth() + 1).padStart(2, '0');
+    var day = String(date.getDate()).padStart(2, '0');
+    var hours = String(date.getHours()).padStart(2, '0');
+    var minutes = String(date.getMinutes()).padStart(2, '0');
+    var seconds = String(date.getSeconds()).padStart(2, '0');
+    return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes + ':' + seconds;
+  }
+
+  function formatISO(date) {
+    return date.toISOString();
+  }
+
+  function parseDateTime(str) {
+    if (!str) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      return new Date(str + 'T00:00:00');
+    }
+    return new Date(str);
+  }
+
+  function listCalendars(store) {
+    var calendars = store.calendarsForEntityType($.EKEntityTypeEvent);
+    var items = [];
+
+    for (var i = 0; i < calendars.count; i++) {
+      var cal = calendars.objectAtIndex(i);
+      items.push({
+        cal: cal,
+        id: unwrap(cal.calendarIdentifier),
+        name: unwrap(cal.title),
+        source: unwrap(cal.source.title)
+      });
+    }
+
+    items.sort(function(a, b) {
+      var sa = (a.source || '') + '\n' + (a.name || '') + '\n' + (a.id || '');
+      var sb = (b.source || '') + '\n' + (b.name || '') + '\n' + (b.id || '');
+      return sa.localeCompare(sb);
+    });
+
+    for (var j = 0; j < items.length; j++) {
+      items[j].index = String(j);
+    }
+
+    return items;
+  }
+
+  var store = $.EKEventStore.alloc.init;
+  var access = ensureCalendarAccess(store);
+  if (!access.ok) {
+    return JSON.stringify({ ok: false, error: access.error });
+  }
+
+  var availableCalendars = listCalendars(store);
+  var byId = {};
+  var byIndex = {};
+  var byName = {};
+
+  for (var i = 0; i < availableCalendars.length; i++) {
+    var info = availableCalendars[i];
+    byId[info.id] = info;
+    byIndex[info.index] = info;
+    if (!byName[info.name]) {
+      byName[info.name] = [];
+    }
+    byName[info.name].push(info);
+  }
+
+  var targetCalendars = [];
+  var seenIds = {};
+  var notFound = [];
+
+  if (args.calendarIds && args.calendarIds.length > 0) {
+    for (var ci = 0; ci < args.calendarIds.length; ci++) {
+      var id = args.calendarIds[ci];
+      if (byId[id]) {
+        if (!seenIds[id]) {
+          targetCalendars.push(byId[id]);
+          seenIds[id] = true;
+        }
+      } else {
+        notFound.push('ID: ' + id);
+      }
+    }
+  }
+
+  if (args.calendarIndexes && args.calendarIndexes.length > 0) {
+    for (var cj = 0; cj < args.calendarIndexes.length; cj++) {
+      var idx = String(args.calendarIndexes[cj]);
+      if (byIndex[idx]) {
+        var calId = byIndex[idx].id;
+        if (!seenIds[calId]) {
+          targetCalendars.push(byIndex[idx]);
+          seenIds[calId] = true;
+        }
+      } else {
+        notFound.push('Index: ' + idx);
+      }
+    }
+  }
+
+  if (args.calendars && args.calendars.length > 0) {
+    for (var ck = 0; ck < args.calendars.length; ck++) {
+      var name = args.calendars[ck];
+      if (byName[name] && byName[name].length > 0) {
+        for (var m = 0; m < byName[name].length; m++) {
+          var calInfo = byName[name][m];
+          if (!seenIds[calInfo.id]) {
+            targetCalendars.push(calInfo);
+            seenIds[calInfo.id] = true;
+          }
+        }
+      } else {
+        notFound.push(name);
+      }
+    }
+  }
+
+  var fromDate = parseDateTime(args.from);
+  var toDate = parseDateTime(args.to);
+
+  var busySlots = [];
+
+  if (targetCalendars.length > 0) {
+    var calendarsArray = [];
+    for (var t = 0; t < targetCalendars.length; t++) {
+      calendarsArray.push(targetCalendars[t].cal);
+    }
+
+    var predicate = store.predicateForEventsWithStartDateEndDateCalendars(
+      toNSDate(fromDate),
+      toNSDate(toDate),
+      $(calendarsArray)
+    );
+    var events = store.eventsMatchingPredicate(predicate);
+
+    for (var ei = 0; ei < events.count; ei++) {
+      var event = events.objectAtIndex(ei);
+
+      try {
+        var startDate = unwrap(event.startDate);
+        var endDate = unwrap(event.endDate);
+
+        // EventKit predicate already returns overlapping events, no need to filter further
+
+        try {
+          if (event.status === $.EKEventStatusCanceled) {
+            continue;
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        try {
+          if (event.availability === $.EKEventAvailabilityFree) {
+            continue;
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        var calId = unwrap(event.calendar.calendarIdentifier);
+        if (!seenIds[calId]) {
+          continue;
+        }
+
+        var summary = unwrap(event.title) || '(No title)';
+        var calName = unwrap(event.calendar.title) || '';
+
+        busySlots.push({
+          calendar: calName,
+          calendarId: calId,
+          summary: summary,
+          start: formatLocalDate(startDate),
+          end: formatLocalDate(endDate),
+          startISO: formatISO(startDate),
+          endISO: formatISO(endDate)
+        });
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+
+  busySlots.sort(function(a, b) {
+    return a.start.localeCompare(b.start);
+  });
+
+  return JSON.stringify({
+    busy: busySlots,
+    calendarsNotFound: notFound.length > 0 ? notFound : undefined
+  });
+})();

@@ -1,0 +1,108 @@
+// calendars.jxa - List all calendars (EventKit)
+// __args is injected by jxa-runner.js
+
+(function() {
+  ObjC.import('Foundation');
+  ObjC.import('EventKit');
+
+  function unwrap(x) {
+    return ObjC.unwrap(x);
+  }
+
+  function ensureCalendarAccess(store) {
+    var status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
+
+    var fullAccessStatus =
+      typeof $.EKAuthorizationStatusFullAccess !== 'undefined' ? $.EKAuthorizationStatusFullAccess : null;
+    var writeOnlyStatus =
+      typeof $.EKAuthorizationStatusWriteOnly !== 'undefined' ? $.EKAuthorizationStatusWriteOnly : null;
+
+    if (status === $.EKAuthorizationStatusAuthorized || (fullAccessStatus !== null && status === fullAccessStatus)) {
+      return { ok: true };
+    }
+
+    // "Add Only Access" / write-only is not sufficient for listing calendars/events.
+    if (writeOnlyStatus !== null && status === writeOnlyStatus) {
+      return {
+        ok: false,
+        error: {
+          code: 'NOT_AUTHORIZED',
+          message:
+            'Calendar access is set to Add Only (write-only). Change it to Full Access in System Settings > Privacy & Security > Calendars (Options… button).'
+        }
+      };
+    }
+
+    if (status === $.EKAuthorizationStatusNotDetermined) {
+      var done = false;
+      var granted = false;
+
+      if (store.respondsToSelector($.NSSelectorFromString($('requestFullAccessToEventsWithCompletion:')))) {
+        store.requestFullAccessToEventsWithCompletion(function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      } else {
+        store.requestAccessToEntityTypeCompletion($.EKEntityTypeEvent, function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      }
+
+      var start = $.NSDate.date;
+      while (!done) {
+        var elapsed = $.NSDate.date.timeIntervalSinceDate(start);
+        if (elapsed > 15.0) {
+          done = true;
+          granted = false;
+          break;
+        }
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+      }
+
+      if (granted) {
+        return { ok: true };
+      }
+    }
+
+    return {
+      ok: false,
+      error: {
+        code: 'NOT_AUTHORIZED',
+        message:
+          'Calendar access not granted. Enable Full Access (not Add Only) in System Settings > Privacy & Security > Calendars (Options… button) for the responsible app (often \"osascript\" and/or your terminal).'
+      }
+    };
+  }
+
+  var store = $.EKEventStore.alloc.init;
+  var access = ensureCalendarAccess(store);
+  if (!access.ok) {
+    return JSON.stringify({ ok: false, error: access.error });
+  }
+
+  var calendars = store.calendarsForEntityType($.EKEntityTypeEvent);
+  var items = [];
+
+  for (var i = 0; i < calendars.count; i++) {
+    var cal = calendars.objectAtIndex(i);
+    items.push({
+      id: unwrap(cal.calendarIdentifier),
+      name: unwrap(cal.title),
+      source: unwrap(cal.source.title),
+      writable: unwrap(cal.allowsContentModifications)
+    });
+  }
+
+  items.sort(function(a, b) {
+    var sa = (a.source || '') + '\n' + (a.name || '') + '\n' + (a.id || '');
+    var sb = (b.source || '') + '\n' + (b.name || '') + '\n' + (b.id || '');
+    return sa.localeCompare(sb);
+  });
+
+  for (var j = 0; j < items.length; j++) {
+    items[j].index = String(j);
+  }
+
+  return JSON.stringify({ calendars: items });
+})();

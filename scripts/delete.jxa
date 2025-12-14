@@ -1,0 +1,226 @@
+// delete.jxa - Delete an event (EventKit)
+// __args is injected by jxa-runner.js
+// Expected args: { calendarName, calendarId, calendarIndex, eventId }
+
+(function() {
+  ObjC.import('Foundation');
+  ObjC.import('EventKit');
+
+  var args = __args;
+
+  function unwrap(x) {
+    return ObjC.unwrap(x);
+  }
+
+  function ensureCalendarAccess(store) {
+    var status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
+
+    var fullAccessStatus =
+      typeof $.EKAuthorizationStatusFullAccess !== 'undefined' ? $.EKAuthorizationStatusFullAccess : null;
+    var writeOnlyStatus =
+      typeof $.EKAuthorizationStatusWriteOnly !== 'undefined' ? $.EKAuthorizationStatusWriteOnly : null;
+
+    if (status === $.EKAuthorizationStatusAuthorized || (fullAccessStatus !== null && status === fullAccessStatus)) {
+      return { ok: true };
+    }
+
+    // "Add Only Access" / write-only is not sufficient for listing calendars/events.
+    if (writeOnlyStatus !== null && status === writeOnlyStatus) {
+      return {
+        ok: false,
+        error: {
+          code: 'NOT_AUTHORIZED',
+          message:
+            'Calendar access is set to Add Only (write-only). Change it to Full Access in System Settings > Privacy & Security > Calendars (Options… button).'
+        }
+      };
+    }
+
+    if (status === $.EKAuthorizationStatusNotDetermined) {
+      var done = false;
+      var granted = false;
+
+      if (store.respondsToSelector($.NSSelectorFromString($('requestFullAccessToEventsWithCompletion:')))) {
+        store.requestFullAccessToEventsWithCompletion(function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      } else {
+        store.requestAccessToEntityTypeCompletion($.EKEntityTypeEvent, function(g, err) {
+          granted = !!g;
+          done = true;
+        });
+      }
+
+      var start = $.NSDate.date;
+      while (!done) {
+        var elapsed = $.NSDate.date.timeIntervalSinceDate(start);
+        if (elapsed > 15.0) {
+          done = true;
+          granted = false;
+          break;
+        }
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+      }
+
+      if (granted) {
+        return { ok: true };
+      }
+    }
+
+    return {
+      ok: false,
+      error: {
+        code: 'NOT_AUTHORIZED',
+        message:
+          'Calendar access not granted. Enable Full Access (not Add Only) in System Settings > Privacy & Security > Calendars (Options… button) for the responsible app (often \"osascript\" and/or your terminal).'
+      }
+    };
+  }
+
+  function listCalendars(store) {
+    var calendars = store.calendarsForEntityType($.EKEntityTypeEvent);
+    var items = [];
+
+    for (var i = 0; i < calendars.count; i++) {
+      var cal = calendars.objectAtIndex(i);
+      items.push({
+        cal: cal,
+        id: unwrap(cal.calendarIdentifier),
+        name: unwrap(cal.title),
+        source: unwrap(cal.source.title)
+      });
+    }
+
+    items.sort(function(a, b) {
+      var sa = (a.source || '') + '\n' + (a.name || '') + '\n' + (a.id || '');
+      var sb = (b.source || '') + '\n' + (b.name || '') + '\n' + (b.id || '');
+      return sa.localeCompare(sb);
+    });
+
+    for (var j = 0; j < items.length; j++) {
+      items[j].index = String(j);
+    }
+
+    return items;
+  }
+
+  function findCalendar(store, name, id, index) {
+    var calendars = listCalendars(store);
+
+    if (id !== null && id !== undefined) {
+      for (var i = 0; i < calendars.length; i++) {
+        if (calendars[i].id === id) {
+          return { calendar: calendars[i], error: null };
+        }
+      }
+      return {
+        calendar: null,
+        error: { code: 'CALENDAR_NOT_FOUND', message: 'Calendar with ID \"' + id + '\" not found' }
+      };
+    }
+
+    if (index !== null && index !== undefined) {
+      var idx = parseInt(index, 10);
+      if (isNaN(idx) || idx < 0 || idx >= calendars.length) {
+        return {
+          calendar: null,
+          error: { code: 'CALENDAR_NOT_FOUND', message: 'Calendar with index \"' + index + '\" not found' }
+        };
+      }
+      return { calendar: calendars[idx], error: null };
+    }
+
+    var matches = [];
+    for (var j = 0; j < calendars.length; j++) {
+      if (calendars[j].name === name) {
+        matches.push(calendars[j]);
+      }
+    }
+
+    if (matches.length === 0) {
+      return {
+        calendar: null,
+        error: { code: 'CALENDAR_NOT_FOUND', message: 'Calendar \"' + name + '\" not found' }
+      };
+    }
+
+    if (matches.length > 1) {
+      var ids = [];
+      for (var k = 0; k < matches.length; k++) {
+        ids.push(matches[k].id);
+      }
+      return {
+        calendar: null,
+        error: {
+          code: 'AMBIGUOUS_CALENDAR',
+          message: 'Multiple calendars named \"' + name + '\". Use --calendar-id with one of: ' + ids.join(', ')
+        }
+      };
+    }
+
+    return { calendar: matches[0], error: null };
+  }
+
+  var store = $.EKEventStore.alloc.init;
+  var access = ensureCalendarAccess(store);
+  if (!access.ok) {
+    return JSON.stringify({ ok: false, error: access.error });
+  }
+
+  var calResult = findCalendar(store, args.calendarName, args.calendarId, args.calendarIndex);
+  if (calResult.error) {
+    return JSON.stringify({ ok: false, error: calResult.error });
+  }
+
+  var calendarInfo = calResult.calendar;
+  var event = store.eventWithIdentifier(args.eventId);
+
+  if (!event || unwrap(event.calendar.calendarIdentifier) !== calendarInfo.id) {
+    return JSON.stringify({
+      ok: false,
+      error: { code: 'EVENT_NOT_FOUND', message: 'Event with ID \"' + args.eventId + '\" not found' }
+    });
+  }
+
+  try {
+    var warning = null;
+
+    var isRecurring = false;
+    try {
+      isRecurring = event.recurrenceRules && event.recurrenceRules.count > 0;
+    } catch (e) {
+      // ignore
+    }
+
+    if (isRecurring) {
+      warning = 'This is a recurring event; only this occurrence was deleted';
+    }
+
+    var err = Ref();
+    var removed = store.removeEventSpanError(event, $.EKSpanThisEvent, err);
+    if (!removed) {
+      var e = err[0];
+      var msg = e ? unwrap(e.localizedDescription) : 'Unknown error';
+      return JSON.stringify({
+        ok: false,
+        error: { code: 'JXA_ERROR', message: 'Failed to delete event: ' + msg }
+      });
+    }
+
+    return JSON.stringify({
+      ok: true,
+      deleted: {
+        id: args.eventId,
+        calendar: calendarInfo.name,
+        calendarId: calendarInfo.id
+      },
+      warning: warning
+    });
+  } catch (e) {
+    return JSON.stringify({
+      ok: false,
+      error: { code: 'JXA_ERROR', message: 'Failed to delete event: ' + e.message }
+    });
+  }
+})();
