@@ -5,7 +5,7 @@ Apple Calendar CLI for macOS — manage calendars and events from the command li
 ## Install
 
 ```bash
-npm i -g @joargp/accli@beta
+npm i -g @joargp/accli
 ```
 
 ## Quick start

@@ -34,7 +34,6 @@
     "darwin"
   ],
   "publishConfig": {
-    "tag": "beta",
     "access": "public"
   },
   "devDependencies": {
