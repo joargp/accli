@@ -41,6 +41,10 @@ Run `accli <command> --help` for command-specific options.
 
 Add `--json` to most commands to output JSON (including errors).
 
+## Agent-Ready
+
+Designed for coding agents and automation: structured `--json` output on all commands, distinct exit codes (0=success, 1=runtime, 2=validation, 10=auth), machine-readable error codes, and persistent calendar IDs for reliable targeting.
+
 ## Notes
 
 - macOS only (`darwin`), because it uses `osascript` + EventKit.
