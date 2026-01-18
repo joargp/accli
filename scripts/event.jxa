@@ -247,7 +247,7 @@
         start: allDay ? formatDateOnly(startDate) : formatLocalDate(startDate),
         end: allDay ? formatDateOnly(displayEndDate) : formatLocalDate(displayEndDate),
         startISO: formatISO(startDate),
-        endISO: formatISO(endDate),
+        endISO: formatISO(displayEndDate),
         isRecurring: isRecurring
       }
     });

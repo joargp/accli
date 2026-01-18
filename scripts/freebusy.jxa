@@ -226,6 +226,12 @@
       try {
         var startDate = unwrap(event.startDate);
         var endDate = unwrap(event.endDate);
+        var allDay = !!unwrap(event.allDay);
+        var displayEndDate = endDate;
+        if (allDay) {
+          displayEndDate = new Date(endDate.getTime());
+          displayEndDate.setDate(displayEndDate.getDate() - 1);
+        }
 
         // EventKit predicate already returns overlapping events, no need to filter further
 
@@ -258,9 +264,9 @@
           calendarId: calId,
           summary: summary,
           start: formatLocalDate(startDate),
-          end: formatLocalDate(endDate),
+          end: formatLocalDate(displayEndDate),
           startISO: formatISO(startDate),
-          endISO: formatISO(endDate)
+          endISO: formatISO(displayEndDate)
         });
       } catch (e) {
         continue;
