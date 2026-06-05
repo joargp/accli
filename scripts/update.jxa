@@ -99,6 +99,12 @@
     return year + '-' + month + '-' + day;
   }
 
+  function displayEndDateForAllDay(startDate, endDate) {
+    var adjusted = new Date(endDate.getTime());
+    adjusted.setDate(adjusted.getDate() - 1);
+    return formatDateOnly(adjusted) < formatDateOnly(startDate) ? startDate : adjusted;
+  }
+
   function parseDateTime(str) {
     if (!str) return null;
     if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
@@ -343,8 +349,7 @@
     var updatedAllDay = !!unwrap(event.allDay);
     var displayEnd = updatedEnd;
     if (updatedAllDay) {
-      displayEnd = new Date(updatedEnd.getTime());
-      displayEnd.setDate(displayEnd.getDate() - 1);
+      displayEnd = displayEndDateForAllDay(updatedStart, updatedEnd);
     }
 
     return JSON.stringify({

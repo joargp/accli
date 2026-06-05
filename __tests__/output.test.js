@@ -57,6 +57,26 @@ describe('lib/output formatting', () => {
     expect(text).toMatch(/Description: A+\.\.\./);
   });
 
+  test('formatEvents does not render inverted all-day date ranges', () => {
+    const text = output.formatEvents({
+      count: 1,
+      truncated: false,
+      events: [
+        {
+          id: 'E1',
+          summary: 'Vacation',
+          allDay: true,
+          start: '2026-03-13',
+          end: '2026-03-12',
+          calendar: 'Work',
+        },
+      ],
+    });
+
+    expect(text).toMatch(/Date: 2026-03-13/);
+    expect(text).not.toMatch(/Dates: 2026-03-13 to 2026-03-12/);
+  });
+
   test('outputError prints NOT_AUTHORIZED tip in human mode', () => {
     const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {

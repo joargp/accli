@@ -99,6 +99,12 @@
     return date.toISOString();
   }
 
+  function displayEndDateForAllDay(startDate, endDate) {
+    var adjusted = new Date(endDate.getTime());
+    adjusted.setDate(adjusted.getDate() - 1);
+    return formatDateOnly(adjusted) < formatDateOnly(startDate) ? startDate : adjusted;
+  }
+
   function listCalendars(store) {
     var calendars = store.calendarsForEntityType($.EKEntityTypeEvent);
     var items = [];
@@ -223,8 +229,7 @@
     var allDay = !!unwrap(event.allDay);
     var displayEndDate = endDate;
     if (allDay) {
-      displayEndDate = new Date(endDate.getTime());
-      displayEndDate.setDate(displayEndDate.getDate() - 1);
+      displayEndDate = displayEndDateForAllDay(startDate, endDate);
     }
 
     var isRecurring = false;
