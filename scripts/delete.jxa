@@ -12,6 +12,10 @@
     return ObjC.unwrap(x);
   }
 
+  function toNSDate(date) {
+    return $.NSDate.dateWithTimeIntervalSince1970(date.getTime() / 1000);
+  }
+
   function ensureCalendarAccess(store) {
     var status = $.EKEventStore.authorizationStatusForEntityType($.EKEntityTypeEvent);
 
@@ -162,6 +166,53 @@
     return { calendar: matches[0], error: null };
   }
 
+  function getEventCalendarId(event) {
+    try {
+      if (!event || !event.calendar) {
+        return null;
+      }
+      return unwrap(event.calendar.calendarIdentifier);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function findEventInCalendar(store, calendarInfo, eventId) {
+    var event = store.eventWithIdentifier(eventId);
+    if (getEventCalendarId(event) === calendarInfo.id) {
+      return event;
+    }
+
+    var now = new Date();
+    var fromDate = new Date(now.getTime());
+    fromDate.setFullYear(fromDate.getFullYear() - 1);
+    var toDate = new Date(now.getTime());
+    toDate.setFullYear(toDate.getFullYear() + 2);
+
+    var predicate = store.predicateForEventsWithStartDateEndDateCalendars(
+      toNSDate(fromDate),
+      toNSDate(toDate),
+      $([calendarInfo.cal])
+    );
+    var events = store.eventsMatchingPredicate(predicate);
+
+    for (var i = 0; i < events.count; i++) {
+      var candidate = events.objectAtIndex(i);
+      try {
+        if (
+          (unwrap(candidate.eventIdentifier) === eventId || unwrap(candidate.calendarItemIdentifier) === eventId) &&
+          getEventCalendarId(candidate) === calendarInfo.id
+        ) {
+          return candidate;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
   var store = $.EKEventStore.alloc.init;
   var access = ensureCalendarAccess(store);
   if (!access.ok) {
@@ -174,9 +225,9 @@
   }
 
   var calendarInfo = calResult.calendar;
-  var event = store.eventWithIdentifier(args.eventId);
+  var event = findEventInCalendar(store, calendarInfo, args.eventId);
 
-  if (!event || unwrap(event.calendar.calendarIdentifier) !== calendarInfo.id) {
+  if (!event) {
     return JSON.stringify({
       ok: false,
       error: { code: 'EVENT_NOT_FOUND', message: 'Event with ID \"' + args.eventId + '\" not found' }

@@ -170,6 +170,10 @@ OPTIONS:
   --query <q>          Case-insensitive filter on summary/location/description
   --json               Output JSON
 
+DATE RANGES:
+  Date-only values are parsed at local midnight. For example,
+  --from 2026-02-27 --to 2026-02-28 covers Feb 27 only.
+
 EXAMPLES:
   accli events Work
   accli events --calendar-id "ABC123-DEF456-..." --from 2025-01-01 --to 2025-01-31

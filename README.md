@@ -41,6 +41,12 @@ Run `accli <command> --help` for command-specific options.
 
 Add `--json` to most commands to output JSON (including errors).
 
+## Date ranges
+
+Date-only `--from` and `--to` values are parsed at local midnight. For example,
+`--from 2026-02-27 --to 2026-02-28` covers February 27 only. To include all of
+February 28 too, use `--to 2026-03-01` or pass an explicit end time.
+
 ## Agent-Ready
 
 Designed for coding agents and automation: structured `--json` output on all commands, distinct exit codes (0=success, 1=runtime, 2=validation, 10=auth), machine-readable error codes, and persistent calendar IDs for reliable targeting.
