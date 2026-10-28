@@ -1,6 +1,6 @@
 {
   "name": "@joargp/accli",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Apple Calendar CLI for macOS - manage calendars and events from the command line",
   "main": "lib/index.js",
   "bin": {

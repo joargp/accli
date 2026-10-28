@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.0.0
 
 - **Breaking:** `update` and `delete` on a recurring event now require `--occurrence-date` or `--span all`. They used to act on the first occurrence of the series while reporting success.  #6
 - Added `--occurrence-date` and `--span this|future|all` to `update` and `delete`, and `--occurrence-date` to `event`.  #6
