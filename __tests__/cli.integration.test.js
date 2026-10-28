@@ -470,6 +470,51 @@ describe('strict calendar input validation', () => {
   });
 });
 
+describe('recurring occurrence targeting', () => {
+  function echoArgs(args) {
+    const result = runCli(args, { env: { ACCLI_MOCK_ECHO_ARGS: '1' } });
+    expect(result.status).toBe(0);
+    return JSON.parse(result.stdout).echoedArgs;
+  }
+
+  test.each([
+    [['delete', 'Work', 'event-123', '--span', 'sometimes'], 'INVALID_ARGUMENT', /Invalid --span/],
+    [['update', 'Work', 'event-123', '--span', 'all', '--occurrence-date', '2026-09-21'], 'INVALID_ARGUMENT', /--span all/],
+    [['delete', 'Work', 'event-123', '--occurrence-date', '2026-13-01'], 'INVALID_DATETIME', /--occurrence-date/],
+    [['delete', 'Work', 'event-123', '--occurrence-date', 'tomorrow'], 'INVALID_DATETIME', /--occurrence-date/],
+    [['event', 'Work', 'event-123', '--span', 'all'], 'INVALID_ARGUMENT', /Unknown flag: --span/],
+    [['delete', 'Work', 'event-123', '--span', 'this', '--span', 'all'], 'INVALID_ARGUMENT', /only be specified once: --span/],
+  ])('rejects invalid occurrence input %#', (args, code, message) => {
+    const result = runCli(args);
+    expect(result.status).toBe(2);
+    const data = JSON.parse(result.stdout);
+    expect(data.error.code).toBe(code);
+    expect(data.error.message).toMatch(message);
+  });
+
+  test('passes occurrence date and span to delete, update, and event scripts', () => {
+    expect(echoArgs(['delete', 'Work', 'event-123', '--occurrence-date', '2026-09-21T16:00:00', '--span', 'future']))
+      .toMatchObject({ eventId: 'event-123', occurrenceDate: '2026-09-21T16:00:00', span: 'future' });
+    expect(echoArgs(['update', 'Work', 'event-123', '--occurrence-date', '2026-09-21', '--summary', 'X']))
+      .toMatchObject({ eventId: 'event-123', occurrenceDate: '2026-09-21', span: null, summary: 'X' });
+    expect(echoArgs(['delete', 'Work', 'event-123', '--span', 'all']))
+      .toMatchObject({ occurrenceDate: null, span: 'all' });
+    expect(echoArgs(['event', 'Work', 'event-123', '--occurrence-date', '2026-09-21T16:00']))
+      .toMatchObject({ eventId: 'event-123', occurrenceDate: '2026-09-21T16:00' });
+  });
+
+  test.each([
+    ['OCCURRENCE_REQUIRED', 2],
+    ['AMBIGUOUS_OCCURRENCE', 2],
+    ['OCCURRENCE_NOT_FOUND', 1],
+  ])('maps %s from the script to exit code %i', (code, exitCode) => {
+    const payload = JSON.stringify({ ok: false, error: { code, message: 'recurring' } });
+    const result = runCli(['delete', 'Work', 'event-123'], { env: { ACCLI_MOCK_OSASCRIPT_RESPONSE: payload } });
+    expect(result.status).toBe(exitCode);
+    expect(JSON.parse(result.stdout).error.code).toBe(code);
+  });
+});
+
 describe('EVENT_NOT_FOUND returns proper error (regression test)', () => {
   test('event command returns exit code 1 for EVENT_NOT_FOUND', () => {
     const tmp = makeTempHome();

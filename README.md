@@ -54,6 +54,30 @@ Date-only `--from` and `--to` values are parsed at local midnight. For example,
 `--from 2026-02-27 --to 2026-02-28` covers February 27 only. To include all of
 February 28 too, use `--to 2026-03-01` or pass an explicit end time.
 
+## Recurring events
+
+All occurrences of a recurring event share one `id`. `events` and `event`
+therefore also return an `occurrenceDate` (the occurrence's original start) that
+identifies a single occurrence.
+
+`update` and `delete` refuse to act on a recurring event unless you say which
+occurrences to change:
+
+```sh
+# One occurrence (pass occurrenceDate from `accli events`)
+accli delete Work <id> --occurrence-date 2026-09-21T16:00:00
+
+# This occurrence and all later ones
+accli update Work <id> --occurrence-date 2026-09-21T16:00:00 --span future --summary "New title"
+
+# The whole series
+accli delete Work <id> --span all
+```
+
+A date-only `--occurrence-date` matches the occurrence on that day. If no
+occurrence matches, the command fails with `OCCURRENCE_NOT_FOUND` instead of
+reporting success. IDs ending in `/RID=<seconds>` are also accepted.
+
 ## Agent-Ready
 
 Designed for coding agents and automation: structured JSON output on all operational commands, distinct exit codes (0=success, 1=runtime, 2=validation, 10=auth), machine-readable error codes, and persistent calendar IDs for reliable targeting.

@@ -1,6 +1,6 @@
 // event.jxa - Get a single event by ID (EventKit)
 // __args is injected by jxa-runner.js
-// Expected args: { calendarName, calendarId, calendarIndex, eventId }
+// Expected args: { calendarName, calendarId, calendarIndex, eventId, occurrenceDate }
 
 (function() {
   ObjC.import('Foundation');
@@ -182,29 +182,19 @@
   }
 
   var calendarInfo = calResult.calendar;
-  var event = store.eventWithIdentifier(args.eventId);
-
-  if (!event) {
-    return JSON.stringify({
-      ok: false,
-      error: {
-        code: 'EVENT_NOT_FOUND',
-        message: 'Event with ID "' + args.eventId + '" not found'
-      }
-    });
+  var resolved = AccliEventResolver.resolve(store, calendarInfo, {
+    eventId: args.eventId,
+    occurrenceDate: args.occurrenceDate,
+    span: null,
+    requireOccurrence: false
+  });
+  if (resolved.error) {
+    return JSON.stringify({ ok: false, error: resolved.error });
   }
 
-  try {
-    if (unwrap(event.calendar.calendarIdentifier) !== calendarInfo.id) {
-      return JSON.stringify({
-        ok: false,
-        error: {
-          code: 'EVENT_NOT_FOUND',
-          message: 'Event with ID "' + args.eventId + '" not found in specified calendar'
-        }
-      });
-    }
+  var event = resolved.event;
 
+  try {
     var startDate = unwrap(event.startDate);
     var endDate = unwrap(event.endDate);
     var allDay = !!unwrap(event.allDay);
@@ -234,7 +224,8 @@
         end: allDay ? AccliDateUtils.formatDateOnly(displayEndDate) : AccliDateUtils.formatLocalDate(displayEndDate),
         startISO: formatISO(startDate),
         endISO: formatISO(displayEndDate),
-        isRecurring: isRecurring
+        isRecurring: isRecurring,
+        occurrenceDate: AccliEventResolver.formatOccurrenceDate(event)
       }
     });
   } catch (e) {

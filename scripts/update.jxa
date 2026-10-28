@@ -1,6 +1,6 @@
 // update.jxa - Update an existing event (EventKit)
 // __args is injected by jxa-runner.js
-// Expected args: { calendarName, calendarId, calendarIndex, eventId, summary, start, end, location, description, allDay, noAllDay }
+// Expected args: { calendarName, calendarId, calendarIndex, eventId, occurrenceDate, span, summary, start, end, location, description, allDay, noAllDay }
 
 (function() {
   ObjC.import('Foundation');
@@ -192,37 +192,28 @@
   }
 
   var calendarInfo = calResult.calendar;
-  var event = store.eventWithIdentifier(args.eventId);
-
-  if (!event) {
-    return JSON.stringify({
-      ok: false,
-      error: { code: 'EVENT_NOT_FOUND', message: 'Event with ID \"' + args.eventId + '\" not found' }
-    });
+  var resolved = AccliEventResolver.resolve(store, calendarInfo, {
+    eventId: args.eventId,
+    occurrenceDate: args.occurrenceDate,
+    span: args.span,
+    requireOccurrence: true
+  });
+  if (resolved.error) {
+    return JSON.stringify({ ok: false, error: resolved.error });
   }
 
-  if (unwrap(event.calendar.calendarIdentifier) !== calendarInfo.id) {
-    return JSON.stringify({
-      ok: false,
-      error: { code: 'EVENT_NOT_FOUND', message: 'Event with ID \"' + args.eventId + '\" not found' }
-    });
-  }
+  var event = resolved.event;
 
   try {
     var currentAllDay = !!unwrap(event.allDay);
     var currentStart = unwrap(event.startDate);
     var currentEnd = unwrap(event.endDate);
+    var occurrenceDate = AccliEventResolver.formatOccurrenceDate(event);
     var warning = null;
-
-    var isRecurring = false;
-    try {
-      isRecurring = event.recurrenceRules && event.recurrenceRules.count > 0;
-    } catch (e) {
-      // ignore
-    }
-
-    if (isRecurring) {
-      warning = 'This is a recurring event; only this occurrence was updated';
+    if (resolved.spanName === 'future') {
+      warning = 'Updated this and all future occurrences of the recurring event';
+    } else if (resolved.spanName === 'all') {
+      warning = 'Updated the entire recurring series';
     }
 
     var targetAllDay = currentAllDay;
@@ -301,7 +292,7 @@
     }
 
     var err = Ref();
-    var saved = store.saveEventSpanError(event, $.EKSpanThisEvent, err);
+    var saved = store.saveEventSpanError(event, resolved.span, err);
     if (!saved) {
       var e = err[0];
       var msg = e ? unwrap(e.localizedDescription) : 'Unknown error';
@@ -328,7 +319,10 @@
         summary: unwrap(event.title) || '',
         allDay: updatedAllDay,
         start: updatedAllDay ? AccliDateUtils.formatDateOnly(updatedStart) : AccliDateUtils.formatLocalDate(updatedStart),
-        end: updatedAllDay ? AccliDateUtils.formatDateOnly(displayEnd) : AccliDateUtils.formatLocalDate(displayEnd)
+        end: updatedAllDay ? AccliDateUtils.formatDateOnly(displayEnd) : AccliDateUtils.formatLocalDate(displayEnd),
+        occurrenceDate: occurrenceDate,
+        isRecurring: resolved.recurring,
+        span: resolved.spanName
       },
       warning: warning
     });

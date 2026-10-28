@@ -1,0 +1,253 @@
+// Shared EventKit event/occurrence resolution for accli JXA commands.
+//
+// EventKit gives every occurrence of a recurring series the same
+// eventIdentifier, and eventWithIdentifier() always returns the first
+// occurrence. To address one occurrence we therefore resolve by the series
+// identifier plus the occurrence's original start (occurrenceDate).
+(function(global) {
+  'use strict';
+
+  // Seconds between the Unix epoch and the Cocoa reference date (2001-01-01Z).
+  var COCOA_EPOCH_OFFSET = 978307200;
+  var DAY_MS = 86400000;
+  // Detached occurrences can be moved away from their original slot; search a
+  // generous window around the requested occurrence date.
+  var SEARCH_WINDOW_DAYS = 7;
+
+  function unwrap(x) {
+    return ObjC.unwrap(x);
+  }
+
+  function toNSDate(date) {
+    return $.NSDate.dateWithTimeIntervalSince1970(date.getTime() / 1000);
+  }
+
+  function calendarIdOf(event) {
+    try {
+      if (!event || !event.calendar) return null;
+      return unwrap(event.calendar.calendarIdentifier) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isRecurring(event) {
+    try {
+      return !!(event.recurrenceRules && event.recurrenceRules.count > 0);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function occurrenceDateOf(event) {
+    try {
+      return unwrap(event.occurrenceDate) || unwrap(event.startDate) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Format the occurrence date the same way `start` is formatted, so callers
+  // can pass it straight back via --occurrence-date.
+  function formatOccurrenceDate(event) {
+    var date = occurrenceDateOf(event);
+    if (!date) return null;
+    return unwrap(event.allDay) ? AccliDateUtils.formatDateOnly(date) : AccliDateUtils.formatLocalDate(date);
+  }
+
+  function stripRid(identifier) {
+    return typeof identifier === 'string' ? identifier.replace(/\/RID=[^/]*$/, '') : identifier;
+  }
+
+  // "<A>:<B>/RID=<seconds since 2001-01-01>" -> { baseId, date }
+  function parseRid(eventId) {
+    var match = /^(.+)\/RID=(-?\d+(?:\.\d+)?)$/.exec(eventId || '');
+    if (!match) return null;
+    return { baseId: match[1], date: new Date((Number(match[2]) + COCOA_EPOCH_OFFSET) * 1000) };
+  }
+
+  function sameOccurrence(event, target, dateOnly) {
+    var occ = occurrenceDateOf(event);
+    if (!occ) return false;
+    if (dateOnly) return AccliDateUtils.formatDateOnly(occ) === AccliDateUtils.formatDateOnly(target);
+    return Math.abs(occ.getTime() - target.getTime()) < 1000;
+  }
+
+  function eventsInWindow(store, calendarInfo, from, to) {
+    var predicate = store.predicateForEventsWithStartDateEndDateCalendars(
+      toNSDate(from),
+      toNSDate(to),
+      $([calendarInfo.cal])
+    );
+    return store.eventsMatchingPredicate(predicate);
+  }
+
+  // Look up an event by identifier, constrained to the selected calendar.
+  function findEventById(store, calendarInfo, eventId) {
+    var event = store.eventWithIdentifier(eventId);
+    if (calendarIdOf(event) === calendarInfo.id) {
+      return event;
+    }
+
+    var now = new Date();
+    var from = new Date(now.getTime());
+    from.setFullYear(from.getFullYear() - 1);
+    var to = new Date(now.getTime());
+    to.setFullYear(to.getFullYear() + 2);
+
+    var events = eventsInWindow(store, calendarInfo, from, to);
+    for (var i = 0; i < events.count; i++) {
+      var candidate = events.objectAtIndex(i);
+      try {
+        if (
+          (unwrap(candidate.eventIdentifier) === eventId || unwrap(candidate.calendarItemIdentifier) === eventId) &&
+          calendarIdOf(candidate) === calendarInfo.id
+        ) {
+          return candidate;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  function findOccurrences(store, calendarInfo, anchor, target, dateOnly) {
+    var seriesItemId = unwrap(anchor.calendarItemIdentifier);
+    var seriesEventId = stripRid(unwrap(anchor.eventIdentifier));
+    var from = new Date(target.getTime() - SEARCH_WINDOW_DAYS * DAY_MS);
+    var to = new Date(target.getTime() + (SEARCH_WINDOW_DAYS + 1) * DAY_MS);
+    var events = eventsInWindow(store, calendarInfo, from, to);
+    var matches = [];
+
+    for (var i = 0; i < events.count; i++) {
+      var candidate = events.objectAtIndex(i);
+      try {
+        var sameSeries =
+          unwrap(candidate.calendarItemIdentifier) === seriesItemId ||
+          stripRid(unwrap(candidate.eventIdentifier)) === seriesEventId;
+        if (sameSeries && calendarIdOf(candidate) === calendarInfo.id && sameOccurrence(candidate, target, dateOnly)) {
+          matches.push(candidate);
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return matches;
+  }
+
+  function fail(code, message) {
+    return { error: { code: code, message: message } };
+  }
+
+  function found(event, spanName, recurring) {
+    return {
+      error: null,
+      event: event,
+      spanName: spanName,
+      span: spanName === 'this' ? $.EKSpanThisEvent : $.EKSpanFutureEvents,
+      recurring: recurring
+    };
+  }
+
+  // Resolve the event/occurrence a command should act on.
+  // options: { eventId, occurrenceDate: string|null, span: 'this'|'future'|'all'|null,
+  //            requireOccurrence: boolean }
+  // Returns { error } or { event, span, spanName, recurring }.
+  function resolve(store, calendarInfo, options) {
+    var eventId = options.eventId;
+    var spanName = options.span || 'this';
+    var target = null;
+    var dateOnly = false;
+
+    if (options.occurrenceDate !== null && options.occurrenceDate !== undefined) {
+      target = AccliDateUtils.parseDateTime(options.occurrenceDate);
+      if (!target) {
+        return fail('INVALID_DATETIME', 'Invalid occurrence date: ' + options.occurrenceDate);
+      }
+      dateOnly = AccliDateUtils.isDateOnly(options.occurrenceDate);
+    }
+
+    var rid = parseRid(eventId);
+    if (rid) {
+      // Detached occurrences have their own "/RID=" identifier that EventKit
+      // resolves directly.
+      var direct = store.eventWithIdentifier(eventId);
+      if (calendarIdOf(direct) === calendarInfo.id && !target && spanName !== 'all') {
+        return found(direct, spanName, true);
+      }
+      // Otherwise treat the suffix as the occurrence date of the series.
+      eventId = rid.baseId;
+      if (!target) {
+        target = rid.date;
+        dateOnly = false;
+      }
+    }
+
+    var anchor = findEventById(store, calendarInfo, eventId);
+    if (!anchor) {
+      return fail('EVENT_NOT_FOUND', 'Event with ID "' + options.eventId + '" not found');
+    }
+
+    var recurring = isRecurring(anchor);
+
+    if (!recurring) {
+      if (target && !sameOccurrence(anchor, target, dateOnly)) {
+        return fail(
+          'OCCURRENCE_NOT_FOUND',
+          'Event "' + options.eventId + '" is not recurring and does not occur at ' +
+            (options.occurrenceDate || AccliDateUtils.formatLocalDate(target)) +
+            ' (it starts ' + formatOccurrenceDate(anchor) + ')'
+        );
+      }
+      return found(anchor, 'this', false);
+    }
+
+    if (spanName === 'all') {
+      // The identifier lookup returns the first occurrence; acting on it with
+      // EKSpanFutureEvents covers the whole series.
+      return found(anchor, 'all', true);
+    }
+
+    if (!target) {
+      if (!options.requireOccurrence) {
+        return found(anchor, spanName, true);
+      }
+      return fail(
+        'OCCURRENCE_REQUIRED',
+        'Event "' + options.eventId + '" is recurring. Pass --occurrence-date (the occurrenceDate field from ' +
+          '`accli events`) to target one occurrence, or --span all for the whole series.'
+      );
+    }
+
+    var matches = findOccurrences(store, calendarInfo, anchor, target, dateOnly);
+    if (matches.length === 0) {
+      return fail(
+        'OCCURRENCE_NOT_FOUND',
+        'Recurring event "' + options.eventId + '" has no occurrence at ' +
+          (options.occurrenceDate || AccliDateUtils.formatLocalDate(target))
+      );
+    }
+    if (matches.length > 1) {
+      var dates = [];
+      for (var i = 0; i < matches.length; i++) {
+        dates.push(formatOccurrenceDate(matches[i]));
+      }
+      return fail(
+        'AMBIGUOUS_OCCURRENCE',
+        'Multiple occurrences match ' + options.occurrenceDate + '; use one of: ' + dates.join(', ')
+      );
+    }
+
+    return found(matches[0], spanName, true);
+  }
+
+  global.AccliEventResolver = {
+    resolve: resolve,
+    isRecurring: isRecurring,
+    formatOccurrenceDate: formatOccurrenceDate,
+    parseRid: parseRid
+  };
+})(this);

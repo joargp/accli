@@ -1,6 +1,6 @@
 // delete.jxa - Delete an event (EventKit)
 // __args is injected by jxa-runner.js
-// Expected args: { calendarName, calendarId, calendarIndex, eventId }
+// Expected args: { calendarName, calendarId, calendarIndex, eventId, occurrenceDate, span }
 
 (function() {
   ObjC.import('Foundation');
@@ -10,10 +10,6 @@
 
   function unwrap(x) {
     return ObjC.unwrap(x);
-  }
-
-  function toNSDate(date) {
-    return $.NSDate.dateWithTimeIntervalSince1970(date.getTime() / 1000);
   }
 
   function ensureCalendarAccess(store) {
@@ -166,53 +162,6 @@
     return { calendar: matches[0], error: null };
   }
 
-  function getEventCalendarId(event) {
-    try {
-      if (!event || !event.calendar) {
-        return null;
-      }
-      return unwrap(event.calendar.calendarIdentifier);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function findEventInCalendar(store, calendarInfo, eventId) {
-    var event = store.eventWithIdentifier(eventId);
-    if (getEventCalendarId(event) === calendarInfo.id) {
-      return event;
-    }
-
-    var now = new Date();
-    var fromDate = new Date(now.getTime());
-    fromDate.setFullYear(fromDate.getFullYear() - 1);
-    var toDate = new Date(now.getTime());
-    toDate.setFullYear(toDate.getFullYear() + 2);
-
-    var predicate = store.predicateForEventsWithStartDateEndDateCalendars(
-      toNSDate(fromDate),
-      toNSDate(toDate),
-      $([calendarInfo.cal])
-    );
-    var events = store.eventsMatchingPredicate(predicate);
-
-    for (var i = 0; i < events.count; i++) {
-      var candidate = events.objectAtIndex(i);
-      try {
-        if (
-          (unwrap(candidate.eventIdentifier) === eventId || unwrap(candidate.calendarItemIdentifier) === eventId) &&
-          getEventCalendarId(candidate) === calendarInfo.id
-        ) {
-          return candidate;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-
-    return null;
-  }
-
   if (args.calendarIndex !== null && args.calendarIndex !== undefined && !AccliDateUtils.isNonNegativeInteger(String(args.calendarIndex))) {
     return JSON.stringify({ ok: false, error: { code: 'INVALID_ARGUMENT', message: 'Invalid calendar index' } });
   }
@@ -229,31 +178,42 @@
   }
 
   var calendarInfo = calResult.calendar;
-  var event = findEventInCalendar(store, calendarInfo, args.eventId);
-
-  if (!event) {
-    return JSON.stringify({
-      ok: false,
-      error: { code: 'EVENT_NOT_FOUND', message: 'Event with ID \"' + args.eventId + '\" not found' }
-    });
+  var resolved = AccliEventResolver.resolve(store, calendarInfo, {
+    eventId: args.eventId,
+    occurrenceDate: args.occurrenceDate,
+    span: args.span,
+    requireOccurrence: true
+  });
+  if (resolved.error) {
+    return JSON.stringify({ ok: false, error: resolved.error });
   }
 
+  var event = resolved.event;
+
   try {
+    // Capture details before removal; the object is invalid afterwards.
+    var allDay = !!unwrap(event.allDay);
+    var startDate = unwrap(event.startDate);
+    var deleted = {
+      id: unwrap(event.eventIdentifier),
+      calendar: calendarInfo.name,
+      calendarId: calendarInfo.id,
+      summary: unwrap(event.title) || '',
+      start: allDay ? AccliDateUtils.formatDateOnly(startDate) : AccliDateUtils.formatLocalDate(startDate),
+      occurrenceDate: AccliEventResolver.formatOccurrenceDate(event),
+      isRecurring: resolved.recurring,
+      span: resolved.spanName
+    };
+
     var warning = null;
-
-    var isRecurring = false;
-    try {
-      isRecurring = event.recurrenceRules && event.recurrenceRules.count > 0;
-    } catch (e) {
-      // ignore
-    }
-
-    if (isRecurring) {
-      warning = 'This is a recurring event; only this occurrence was deleted';
+    if (resolved.spanName === 'future') {
+      warning = 'Deleted this and all future occurrences of the recurring event';
+    } else if (resolved.spanName === 'all') {
+      warning = 'Deleted the entire recurring series';
     }
 
     var err = Ref();
-    var removed = store.removeEventSpanError(event, $.EKSpanThisEvent, err);
+    var removed = store.removeEventSpanError(event, resolved.span, err);
     if (!removed) {
       var e = err[0];
       var msg = e ? unwrap(e.localizedDescription) : 'Unknown error';
@@ -265,11 +225,7 @@
 
     return JSON.stringify({
       ok: true,
-      deleted: {
-        id: args.eventId,
-        calendar: calendarInfo.name,
-        calendarId: calendarInfo.id
-      },
+      deleted: deleted,
       warning: warning
     });
   } catch (e) {

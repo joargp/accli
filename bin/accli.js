@@ -12,7 +12,9 @@ const GLOBAL_BOOLEAN_FLAGS = ['help', 'version', 'human', 'compact', 'json'];
 const VALUE_FLAGS = new Set([
   'calendar', 'calendar-id', 'calendar-index', 'calendar-name',
   'from', 'to', 'max', 'query', 'summary', 'start', 'end', 'location', 'description',
+  'occurrence-date', 'span',
 ]);
+const SPANS = ['this', 'future', 'all'];
 
 // Keep the accepted CLI surface next to parsing/dispatch so handlers never
 // silently ignore a typo or surplus input. Calendar selectors are deliberately
@@ -30,7 +32,7 @@ const COMMAND_CONTRACTS = {
   },
   event: {
     booleanFlags: [],
-    scalarFlags: ['calendar-name'],
+    scalarFlags: ['calendar-name', 'occurrence-date'],
     repeatableFlags: ['calendar-id', 'calendar-index'],
     minPositionals: 0,
     maxPositionals: 2,
@@ -46,7 +48,7 @@ const COMMAND_CONTRACTS = {
   },
   update: {
     booleanFlags: ['all-day', 'no-all-day'],
-    scalarFlags: ['calendar-name', 'summary', 'start', 'end', 'location', 'description'],
+    scalarFlags: ['calendar-name', 'occurrence-date', 'span', 'summary', 'start', 'end', 'location', 'description'],
     repeatableFlags: ['calendar-id', 'calendar-index'],
     minPositionals: 0,
     maxPositionals: 2,
@@ -54,7 +56,7 @@ const COMMAND_CONTRACTS = {
   },
   delete: {
     booleanFlags: [],
-    scalarFlags: ['calendar-name'],
+    scalarFlags: ['calendar-name', 'occurrence-date', 'span'],
     repeatableFlags: ['calendar-id', 'calendar-index'],
     minPositionals: 0,
     maxPositionals: 2,
@@ -185,6 +187,18 @@ function validateCommandContract(args) {
 
   if (args.flags['all-day'] && args.flags['no-all-day']) {
     return invalidArgument('Use either --all-day or --no-all-day, not both');
+  }
+
+  if (hasFlag(args, 'occurrence-date') && !parseLocalDateTime(args.flags['occurrence-date']).ok) {
+    return { code: ERROR_CODES.INVALID_DATETIME, message: `Invalid --occurrence-date: ${args.flags['occurrence-date']}` };
+  }
+  if (hasFlag(args, 'span')) {
+    if (!SPANS.includes(args.flags.span)) {
+      return invalidArgument(`Invalid --span: ${args.flags.span} (expected one of: ${SPANS.join(', ')})`);
+    }
+    if (args.flags.span === 'all' && hasFlag(args, 'occurrence-date')) {
+      return invalidArgument('--span all applies to the whole series; do not combine it with --occurrence-date');
+    }
   }
 
   const calendarName = args.flags['calendar-name'];
@@ -358,12 +372,15 @@ OPTIONS:
   --calendar-id <id>        Persistent calendar ID (recommended)
   --calendar-index <index>  Unstable calendar index (deprecated)
   --calendar-name <name>    Calendar name (exact match)
+  --occurrence-date <dt>    Pick one occurrence of a recurring event (the
+                            occurrenceDate field from \`accli events\`)
   --human              Output human-readable text
   --compact            Output single-line JSON (ignored with --human)
   --json               Backward-compatible no-op
 
 EXAMPLES:
   accli event Work event-id-123
+  accli event Work event-id-123 --occurrence-date 2026-09-21T16:00:00
   accli event --calendar-id "ABC123" event-id-123 --human
 `,
     create: `
@@ -400,6 +417,8 @@ OPTIONS:
   --calendar-id <id>        Persistent calendar ID (recommended)
   --calendar-index <index>  Unstable calendar index (deprecated)
   --calendar-name <name>    Calendar name (exact match)
+  --occurrence-date <dt>    Occurrence of a recurring event to update
+  --span <this|future|all>  Recurring scope (default: this)
   --summary <s>        New event title
   --start <datetime>   New start time
   --end <datetime>     New end time
@@ -411,9 +430,16 @@ OPTIONS:
   --compact            Output single-line JSON (ignored with --human)
   --json               Backward-compatible no-op
 
+RECURRING EVENTS:
+  Every occurrence of a recurring event shares the same ID, so recurring
+  events require --occurrence-date (the occurrenceDate field from
+  \`accli events\`) or --span all. A date-only value matches the
+  occurrence on that day.
+
 EXAMPLES:
   accli update Work event-id-123 --summary "Updated meeting"
   accli update Work event-id-123 --start 2025-01-15T15:00 --end 2025-01-15T16:00
+  accli update Work event-id-123 --occurrence-date 2025-01-20T14:00:00 --summary "Moved"
 `,
     delete: `
 accli delete - Delete an event
@@ -425,13 +451,24 @@ OPTIONS:
   --calendar-id <id>        Persistent calendar ID (recommended)
   --calendar-index <index>  Unstable calendar index (deprecated)
   --calendar-name <name>    Calendar name (exact match)
+  --occurrence-date <dt>    Occurrence of a recurring event to delete
+  --span <this|future|all>  Recurring scope (default: this)
   --human              Output human-readable text
   --compact            Output single-line JSON (ignored with --human)
   --json               Backward-compatible no-op
 
+RECURRING EVENTS:
+  Every occurrence of a recurring event shares the same ID, so recurring
+  events require --occurrence-date (the occurrenceDate field from
+  \`accli events\`) or --span all. A date-only value matches the
+  occurrence on that day.
+
 EXAMPLES:
   accli delete Work event-id-123
   accli delete --calendar-id "ABC123" event-id-123
+  accli delete Work event-id-123 --occurrence-date 2025-01-20T14:00:00
+  accli delete Work event-id-123 --occurrence-date 2025-01-20T14:00:00 --span future
+  accli delete Work event-id-123 --span all
 `,
     freebusy: `
 accli freebusy - Get busy time slots
@@ -786,6 +823,7 @@ async function handleEvent(args) {
     calendarId: resolvedCalendarId,
     calendarIndex: resolvedCalendarIndex,
     eventId,
+    occurrenceDate: hasFlag(args, 'occurrence-date') ? args.flags['occurrence-date'] : null,
   };
 
   const result = await runScript('event', scriptArgs);
@@ -1124,6 +1162,8 @@ async function handleUpdate(args) {
     calendarId: resolvedCalendarId,
     calendarIndex: resolvedCalendarIndex,
     eventId,
+    occurrenceDate: hasFlag(args, 'occurrence-date') ? args.flags['occurrence-date'] : null,
+    span: hasFlag(args, 'span') ? args.flags.span : null,
     // Preserve empty strings to allow clearing fields (e.g., --location "")
     summary: args.flags.summary !== undefined ? args.flags.summary : null,
     start: hasFlag(args, 'start') ? args.flags.start : null,
@@ -1258,6 +1298,8 @@ async function handleDelete(args) {
     calendarId: resolvedCalendarId,
     calendarIndex: resolvedCalendarIndex,
     eventId,
+    occurrenceDate: hasFlag(args, 'occurrence-date') ? args.flags['occurrence-date'] : null,
+    span: hasFlag(args, 'span') ? args.flags.span : null,
   };
 
   const result = await runScript('delete', scriptArgs);

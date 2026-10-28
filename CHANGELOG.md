@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking:** `update` and `delete` on a recurring event now require `--occurrence-date` or `--span all`. They used to act on the first occurrence of the series while reporting success.  #6
+- Added `--occurrence-date` and `--span this|future|all` to `update` and `delete`, and `--occurrence-date` to `event`.  #6
+- Added `occurrenceDate` to `events` and `event` output, and occurrence details to `update` and `delete` output.  #6
+- Added the `OCCURRENCE_REQUIRED`, `OCCURRENCE_NOT_FOUND`, and `AMBIGUOUS_OCCURRENCE` error codes.  #6
+- Fixed `osascript` being killed on macOS 27 by running generated scripts from a temporary file.  #7
+- Reported the terminating signal when `osascript` is killed, instead of `Script exited with code null`.  #7
+
 ## 2.0.0
 
 - Make JSON the default output for operational commands and errors.

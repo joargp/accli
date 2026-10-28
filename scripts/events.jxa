@@ -264,7 +264,8 @@
         end: allDay ? AccliDateUtils.formatDateOnly(displayEndDate) : AccliDateUtils.formatLocalDate(displayEndDate),
         startISO: formatISO(startDate),
         endISO: formatISO(displayEndDate),
-        isRecurring: isRecurring
+        isRecurring: isRecurring,
+        occurrenceDate: AccliEventResolver.formatOccurrenceDate(event)
       });
     } catch (e) {
       continue;

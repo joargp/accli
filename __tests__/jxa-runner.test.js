@@ -52,6 +52,7 @@ describe('lib/jxa-runner', () => {
       const wrappedScript = fs.readFileSync(tempScriptPath, 'utf8');
       expect(wrappedScript).toMatch(/^var __accliScriptName = "calendars";\nvar __args = {"foo":"bar"};\n/);
       expect(wrappedScript.indexOf('global.AccliDateUtils')).toBeGreaterThan(wrappedScript.indexOf('var __args'));
+      expect(wrappedScript.indexOf('global.AccliEventResolver')).toBeGreaterThan(wrappedScript.indexOf('global.AccliDateUtils'));
 
       const commandSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'calendars.jxa'), 'utf8');
       expect(wrappedScript.endsWith(commandSource)).toBe(true);

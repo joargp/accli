@@ -167,3 +167,19 @@ describe('lib/output formatting', () => {
     }
   });
 });
+
+describe('formatDelete', () => {
+  test('names the deleted occurrence of a recurring event', () => {
+    const text = output.formatDelete({
+      ok: true,
+      deleted: { calendar: 'Work', summary: 'Standup', isRecurring: true, occurrenceDate: '2026-09-21T16:00:00', span: 'this' },
+      warning: null,
+    });
+    expect(text).toBe('"Standup" (occurrence 2026-09-21T16:00:00) deleted from calendar "Work".');
+  });
+
+  test('omits occurrence details for single events', () => {
+    const text = output.formatDelete({ ok: true, deleted: { calendar: 'Work', summary: 'Lunch', isRecurring: false } });
+    expect(text).toBe('"Lunch" deleted from calendar "Work".');
+  });
+});

@@ -10,6 +10,10 @@ function respondForWrappedScript(wrappedScript) {
   if (process.env.ACCLI_MOCK_OSASCRIPT_RESPONSE) {
     return JSON.parse(process.env.ACCLI_MOCK_OSASCRIPT_RESPONSE);
   }
+  if (process.env.ACCLI_MOCK_ECHO_ARGS) {
+    const argsMatch = /^var __args = (.*);$/m.exec(wrappedScript);
+    return { ok: true, echoedArgs: argsMatch ? JSON.parse(argsMatch[1]) : null };
+  }
   const match = /^var __accliScriptName = ("(?:[^"\\]|\\.)*");$/m.exec(wrappedScript);
   const scriptName = match ? JSON.parse(match[1]) : null;
 
