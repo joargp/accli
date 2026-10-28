@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1
+
+- Fixed JSON output larger than 64 KB being cut off when piped to another program.
+- Fixed `events --max` returning an arbitrary set of events instead of the earliest ones.
+
 ## 3.0.0
 
 - **Breaking:** `update` and `delete` on a recurring event now require `--occurrence-date` or `--span all`. They used to act on the first occurrence of the series while reporting success.  #6

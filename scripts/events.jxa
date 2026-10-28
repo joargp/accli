@@ -218,7 +218,9 @@
   var results = [];
   var query = args.query ? String(args.query).toLowerCase() : null;
 
-  for (var i = 0; i < events.count && results.length < maxEvents + 1; i++) {
+  // EventKit does not return events in date order, so collect every match,
+  // sort, and only then apply --max.
+  for (var i = 0; i < events.count; i++) {
     var event = events.objectAtIndex(i);
 
     try {
@@ -252,6 +254,7 @@
       }
 
       results.push({
+        _sortKey: startDate.getTime(),
         id: unwrap(event.eventIdentifier),
         uid: unwrap(event.calendarItemIdentifier),
         calendar: calendarInfo.name,
@@ -273,12 +276,15 @@
   }
 
   results.sort(function(a, b) {
-    return a.start.localeCompare(b.start);
+    return a._sortKey - b._sortKey || a.summary.localeCompare(b.summary);
   });
 
   var truncated = results.length > maxEvents;
   if (truncated) {
     results = results.slice(0, maxEvents);
+  }
+  for (var r = 0; r < results.length; r++) {
+    delete results[r]._sortKey;
   }
 
   return JSON.stringify({

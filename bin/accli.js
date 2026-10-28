@@ -8,6 +8,15 @@ const { parseLocalDateTime, isNonNegativeInteger, parseEventLimit, validateOrder
 const { spawnSync } = require('child_process');
 const readline = require('readline');
 
+// On macOS, writes to a pipe are asynchronous, so the process.exit() calls
+// below would truncate output larger than the pipe buffer (64 KB). Make
+// stdout/stderr blocking so every write completes before exit.
+for (const stream of [process.stdout, process.stderr]) {
+  if (stream._handle && typeof stream._handle.setBlocking === 'function') {
+    stream._handle.setBlocking(true);
+  }
+}
+
 const GLOBAL_BOOLEAN_FLAGS = ['help', 'version', 'human', 'compact', 'json'];
 const VALUE_FLAGS = new Set([
   'calendar', 'calendar-id', 'calendar-index', 'calendar-name',

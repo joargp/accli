@@ -470,6 +470,23 @@ describe('strict calendar input validation', () => {
   });
 });
 
+describe('large output', () => {
+  test('writes JSON larger than the 64 KB pipe buffer completely before exiting', () => {
+    const events = Array.from({ length: 1500 }, (_, i) => ({
+      id: `event-${i}`,
+      summary: `Event number ${i} with a reasonably long title to pad the payload`,
+      start: '2026-01-01T09:00:00',
+      end: '2026-01-01T10:00:00',
+    }));
+    const payload = JSON.stringify({ ok: true, count: events.length, truncated: false, events });
+    expect(payload.length).toBeGreaterThan(150000);
+
+    const result = runCli(['events', 'Work', '--max', '10000'], { env: { ACCLI_MOCK_OSASCRIPT_RESPONSE: payload } });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).events).toHaveLength(1500);
+  });
+});
+
 describe('recurring occurrence targeting', () => {
   function echoArgs(args) {
     const result = runCli(args, { env: { ACCLI_MOCK_ECHO_ARGS: '1' } });
