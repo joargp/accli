@@ -1,6 +1,7 @@
 'use strict';
 
 const childProcess = require('child_process');
+const fs = require('fs');
 const { EventEmitter } = require('events');
 
 const realSpawn = childProcess.spawn;
@@ -40,7 +41,8 @@ childProcess.spawn = function patchedSpawn(command, args, options) {
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
 
-  const wrappedScript = Array.isArray(args) ? args[3] : '';
+  const scriptPath = Array.isArray(args) ? args[2] : null;
+  const wrappedScript = scriptPath ? fs.readFileSync(scriptPath, 'utf8') : '';
   const payload = respondForWrappedScript(String(wrappedScript || ''));
 
   process.nextTick(() => {

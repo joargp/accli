@@ -4,7 +4,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 
-function makeFakeProcess({ stdout = '', stderr = '', closeCode = 0, emitError = null }) {
+function makeFakeProcess({ stdout = '', stderr = '', closeCode = 0, closeSignal = null, emitError = null }) {
   const proc = new EventEmitter();
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
@@ -16,7 +16,7 @@ function makeFakeProcess({ stdout = '', stderr = '', closeCode = 0, emitError = 
     }
     if (stdout) proc.stdout.emit('data', Buffer.from(stdout));
     if (stderr) proc.stderr.emit('data', Buffer.from(stderr));
-    proc.emit('close', closeCode);
+    proc.emit('close', closeCode, closeSignal);
   });
 
   return proc;
@@ -38,17 +38,27 @@ describe('lib/jxa-runner', () => {
     expect(result.error.message).toMatch(/Script not found/);
   });
 
-  test('wraps a stable script marker, args, and shared date helpers before command source', async () => {
-    const spawnMock = jest.fn((cmd, args) => {
+  test('writes the wrapped JXA source to a temporary file before execution', async () => {
+    let tempScriptPath = null;
+
+    const spawnMock = jest.fn((cmd, args, options) => {
       expect(cmd).toBe('osascript');
       expect(args[0]).toBe('-l');
       expect(args[1]).toBe('JavaScript');
-      expect(args[2]).toBe('-e');
-      const wrappedScript = String(args[3]);
+      expect(args).toHaveLength(3);
+      expect(options).toEqual({ stdio: ['ignore', 'pipe', 'pipe'] });
+
+      tempScriptPath = args[2];
+      const wrappedScript = fs.readFileSync(tempScriptPath, 'utf8');
       expect(wrappedScript).toMatch(/^var __accliScriptName = "calendars";\nvar __args = {"foo":"bar"};\n/);
       expect(wrappedScript.indexOf('global.AccliDateUtils')).toBeGreaterThan(wrappedScript.indexOf('var __args'));
+
       const commandSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'calendars.jxa'), 'utf8');
       expect(wrappedScript.endsWith(commandSource)).toBe(true);
+
+      const mode = fs.statSync(tempScriptPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+
       return makeFakeProcess({
         stdout: JSON.stringify({ ok: true, calendars: [] }),
         closeCode: 0,
@@ -65,6 +75,8 @@ describe('lib/jxa-runner', () => {
       exitCode: EXIT_SUCCESS,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(tempScriptPath).not.toBeNull();
+    expect(fs.existsSync(tempScriptPath)).toBe(false);
   });
 
   test('maps script error codes to validation exit code', async () => {
@@ -119,6 +131,24 @@ describe('lib/jxa-runner', () => {
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(EXIT_RUNTIME_ERROR);
     expect(result.error.code).toBe(ERROR_CODES.PARSE_ERROR);
+  });
+
+  test('reports the terminating signal when osascript is killed', async () => {
+    const spawnMock = jest.fn(() =>
+      makeFakeProcess({
+        closeCode: null,
+        closeSignal: 'SIGKILL',
+      })
+    );
+    jest.doMock('child_process', () => ({ spawn: spawnMock }));
+
+    const { runScript, ERROR_CODES, EXIT_RUNTIME_ERROR } = require('../lib/jxa-runner');
+    const result = await runScript('calendars', {});
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(EXIT_RUNTIME_ERROR);
+    expect(result.error.code).toBe(ERROR_CODES.JXA_ERROR);
+    expect(result.error.message).toBe('Script terminated by signal SIGKILL');
   });
 
   test('returns JXA_ERROR when osascript cannot be executed', async () => {
