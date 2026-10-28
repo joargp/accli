@@ -78,6 +78,7 @@ describe('lib/jxa-runner', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(tempScriptPath).not.toBeNull();
     expect(fs.existsSync(tempScriptPath)).toBe(false);
+    expect(fs.existsSync(path.dirname(tempScriptPath))).toBe(false);
   });
 
   test('maps script error codes to validation exit code', async () => {
@@ -150,6 +151,44 @@ describe('lib/jxa-runner', () => {
     expect(result.exitCode).toBe(EXIT_RUNTIME_ERROR);
     expect(result.error.code).toBe(ERROR_CODES.JXA_ERROR);
     expect(result.error.message).toBe('Script terminated by signal SIGKILL');
+  });
+
+  test('reports the signal even when osascript wrote partial output', async () => {
+    let tempScriptPath = null;
+    const spawnMock = jest.fn((cmd, args) => {
+      tempScriptPath = args[2];
+      return makeFakeProcess({
+        stdout: '{"calendars": [',
+        stderr: 'killed',
+        closeCode: null,
+        closeSignal: 'SIGKILL',
+      });
+    });
+    jest.doMock('child_process', () => ({ spawn: spawnMock }));
+
+    const { runScript, ERROR_CODES, EXIT_RUNTIME_ERROR } = require('../lib/jxa-runner');
+    const result = await runScript('calendars', {});
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(EXIT_RUNTIME_ERROR);
+    expect(result.error.code).toBe(ERROR_CODES.JXA_ERROR);
+    expect(result.error.message).toBe('Script terminated by signal SIGKILL: killed');
+    expect(fs.existsSync(path.dirname(tempScriptPath))).toBe(false);
+  });
+
+  test('removes the temporary directory when osascript fails to start', async () => {
+    let tempScriptPath = null;
+    const spawnMock = jest.fn((cmd, args) => {
+      tempScriptPath = args[2];
+      return makeFakeProcess({ emitError: new Error('spawn ENOENT') });
+    });
+    jest.doMock('child_process', () => ({ spawn: spawnMock }));
+
+    const { runScript } = require('../lib/jxa-runner');
+    const result = await runScript('calendars', {});
+
+    expect(result.success).toBe(false);
+    expect(fs.existsSync(path.dirname(tempScriptPath))).toBe(false);
   });
 
   test('returns JXA_ERROR when osascript cannot be executed', async () => {

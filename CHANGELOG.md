@@ -7,7 +7,8 @@
 - Added `occurrenceDate` to `events` and `event` output, and occurrence details to `update` and `delete` output.  #6
 - Added the `OCCURRENCE_REQUIRED`, `OCCURRENCE_NOT_FOUND`, and `AMBIGUOUS_OCCURRENCE` error codes.  #6
 - Fixed `osascript` being killed on macOS 27 by running generated scripts from a temporary file.  #7
-- Reported the terminating signal when `osascript` is killed, instead of `Script exited with code null`.  #7
+- Reported the terminating signal when `osascript` is killed, instead of `Script exited with code null` or a JSON parse error.  #7
+- Fixed temporary script folders not being removed on Node versions before 14.14.
 
 ## 2.0.0
 
